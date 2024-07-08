@@ -1,0 +1,18 @@
+[package]
+name = "testevents"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+axum = "0.7.5"
+chrono = "0.4.38"
+futures = "0.3.30"
+honeycomb-client = { path = "../honeycomb-client" }
+opentelemetry = "0.22"
+opentelemetry_sdk = "0.22"
+opentelemetry-stdout = { version = "0.3", features = ["trace"] }
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.120"
+tokio = { version = "1.38.0", features = ["full"] }
+dotenv = "0.15.0"
