@@ -3,10 +3,10 @@ mod span_store;
 use std::sync::{Arc, RwLock};
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use honeycomb_client::honeycomb::HoneyComb;
@@ -49,8 +49,8 @@ async fn main() -> anyhow::Result<()> {
 
     // build our application with a route
     let app = Router::new()
-        .route("/", get(root_handler))
-        .route("/child/:trace_id/:span_id/", get(child_handler))
+        .route("/", post(root_handler))
+        .route("/child/:trace_id/:span_id/", post(child_handler))
         .route("/close/:trace_id/:span_id/", get(close_handler))
         .with_state(Arc::clone(&shared_state));
 
@@ -72,28 +72,32 @@ async fn main() -> anyhow::Result<()> {
 
 async fn root_handler(
     State(state): State<SharedState>,
-    Query(attributes): Query<QueryAttributes>,
-) -> Json<Value> {
+    Json(attributes): Json<QueryAttributes>,
+) -> impl IntoResponse {
     let state = &mut state.write().expect("RwLock should not be poisoned");
     let provider = &state.provider;
     let trace_id = provider.config().id_generator.new_trace_id();
     let span_id = provider.config().id_generator.new_span_id();
+    let traceparent = format!("00-{}-{}-01", trace_id, span_id);
     // Store the span
     state
         .spans
         .insert(trace_id.to_string(), span_id.to_string(), None, attributes);
-    Json(json!({ "trace_id": trace_id.to_string(), "span_id": span_id.to_string() }))
+    Json(
+        json!({ "trace_id": trace_id.to_string(), "span_id": span_id.to_string(), "traceparent": traceparent }),
+    )
 }
 
 async fn child_handler(
     State(state): State<SharedState>,
-    Query(attributes): Query<QueryAttributes>,
     Path((trace_id, span_id)): Path<(String, String)>,
-) -> Json<Value> {
+    Json(attributes): Json<QueryAttributes>,
+) -> impl IntoResponse {
     let state = &mut state.write().expect("RwLock should not be poisoned");
     // Set the parent_id to the span_id
     let parent_id = span_id;
     let span_id = &state.provider.config().id_generator.new_span_id();
+    let traceparent = format!("00-{}-{}-01", trace_id, span_id);
     // Store the span
     state.spans.insert(
         trace_id.to_string(),
@@ -101,12 +105,13 @@ async fn child_handler(
         Some(parent_id),
         attributes,
     );
-    Json(json!({ "trace_id": trace_id.to_string(), "span_id": span_id.to_string() }))
+    Json(
+        json!({ "trace_id": trace_id.to_string(), "span_id": span_id.to_string(), "traceparent": traceparent }),
+    )
 }
 
 async fn close_handler(
     State(state): State<SharedState>,
-    //Query(attributes): Query<Attributes>,
     Path((trace_id, span_id)): Path<(String, String)>,
 ) -> Result<Json<Value>, AppError> {
     // Find the span (remove it from the store)
@@ -125,7 +130,6 @@ enum AppError {
     SpanNotFound,
 }
 
-// Tell axum how `AppError` should be converted into a response.
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
@@ -168,12 +172,22 @@ fn handle_honeycomb(
             if let Some(span) = span {
                 let he: HoneycombEvent = span.into();
                 let he_list = vec![&he];
-                let _ = hc
+                match hc
                     .create_events(
                         he.dataset_slug(),
                         serde_json::to_value(he_list).expect("Must serialize"),
                     )
-                    .await;
+                    .await
+                {
+                    Err(e) => eprintln!("Error sending to Honeycomb: {:?}", e),
+                    Ok(statuses) => {
+                        for status in statuses {
+                            if status.status != 202 {
+                                eprintln!("Error sending to Honeycomb: {:?}", status);
+                            }
+                        }
+                    }
+                }
             }
         }
     })
