@@ -1,6 +1,6 @@
 # testevents
 
-A service to make it easier to create spans in some restricted environments. Similar to [buildevents](https://github.com/honeycombio/buildevents/tree/main) but a simple RESTful server. This is useful when you can't execute a binary but need a way to open and close OpenTelemetry compatible spans. Low-code testing tools are a good use case.
+A service to make it easier to create Honeycomb spans in some restricted environments. Similar to [buildevents](https://github.com/honeycombio/buildevents/tree/main) but a simple RESTful server. This is useful when you can't execute a binary but need a way to open and close OpenTelemetry compatible spans. Low-code testing tools are a good use case.
 
 **testevents** wraps the Honeycomb [Create Events API](https://docs.honeycomb.io/api/tag/Events#operation/createEvents) with an in-memory store, keyed on `trace_id` and `span_id`. When you open a span you provide a TTL. If you don't close it in time, say your script crashed, it will "close" the span with an error stating that the TTL ran out.
 
@@ -33,25 +33,72 @@ Provide `TESTEVENTS_PORT` to bind to an alternative from the default `3003`.
 
 ### Example
 
-Request:
+Make a root span:
 
 ```shell
 curl -i -X POST \
-  'http://127.0.0.1:3003/' \
+  'http://127.0.0.1:3003/' \                                                        
   -H 'Content-Type: application/json' \
-  -d '{"service_name":"jerbly-test", 
-       "name":"test", 
-       "hello":"world", 
-       "ttl":6000}'
-```
+  -d '{"service_name":"jerbly-test",
+       "name":"test",
+       "hello":"world",     
+       "ttl":600000}'
 
-Response:
-
-```shell
 HTTP/1.1 200 OK
 content-type: application/json
 content-length: 148
-date: Thu, 11 Jul 2024 01:43:11 GMT
+date: Thu, 11 Jul 2024 11:05:55 GMT
 
-{"span_id":"c7bf50437dd159fe","trace_id":"b4a65a1ad17de44ce84a31df0504e5e3","traceparent":"00-b4a65a1ad17de44ce84a31df0504e5e3-c7bf50437dd159fe-01"}
+{"span_id":"5370f70191c4b03c","trace_id":"4c278c122e123f87036b44772861b9f4","traceparent":"00-4c278c122e123f87036b44772861b9f4-5370f70191c4b03c-01"}
 ```
+
+Make a child span:
+
+```shell
+curl -i -X POST \
+  'http://127.0.0.1:3003/child/4c278c122e123f87036b44772861b9f4/5370f70191c4b03c/' \
+  -H 'Content-Type: application/json' \
+  -d '{"service_name":"jerbly-test",
+       "name":"test_child", 
+       "hello":"child span",
+       "ttl":600000}'
+
+HTTP/1.1 200 OK
+content-type: application/json
+content-length: 148
+date: Thu, 11 Jul 2024 11:06:43 GMT
+
+{"span_id":"a53924432a660874","trace_id":"4c278c122e123f87036b44772861b9f4","traceparent":"00-4c278c122e123f87036b44772861b9f4-a53924432a660874-01"}
+```
+
+Close the child span:
+
+```shell
+curl -i -X GET \ 
+  'http://127.0.0.1:3003/close/4c278c122e123f87036b44772861b9f4/a53924432a660874/'  
+  
+HTTP/1.1 200 OK
+content-type: application/json
+content-length: 16
+date: Thu, 11 Jul 2024 11:07:20 GMT
+
+{"message":"OK"}
+```
+
+Close the root span:
+
+```shell
+curl -i -X GET \
+  'http://127.0.0.1:3003/close/4c278c122e123f87036b44772861b9f4/5370f70191c4b03c/'
+
+HTTP/1.1 200 OK
+content-type: application/json
+content-length: 16
+date: Thu, 11 Jul 2024 11:07:38 GMT
+
+{"message":"OK"}
+```
+
+Gives this trace:
+
+![a screenshot showing the trace](trace.png "Trace screenshot")
