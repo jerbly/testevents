@@ -1,0 +1,91 @@
+openapi: '3.0.3'
+info:
+  title: testevents
+  version: '0.1.0'
+servers:
+  - url: https://localhost:3003/
+paths:
+  /:
+    post:
+      summary: Create a root span
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                service_name:
+                  type: string
+                ttl:
+                  type: integer
+                  default: 10000
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  span_id:
+                    type: string
+                  trace_id:
+                    type: string
+                  traceparent:
+                    type: string
+  /child/{trace_id}/{span_id}:
+    post:
+      summary: Create a child span
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                service_name:
+                  type: string
+                ttl:
+                  type: integer
+                  default: 10000
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  span_id:
+                    type: string
+                  trace_id:
+                    type: string
+                  traceparent:
+                    type: string
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  err:
+                    type: string
+                    default: 'Span not found'
+  /close/{trace_id}/{span_id}:
+    get:
+      summary: Close a span
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    default: 'OK'

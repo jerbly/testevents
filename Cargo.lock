@@ -438,7 +438,8 @@ checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
 name = "honeycomb-client"
-version = "0.2.1"
+version = "0.2.2"
+source = "git+https://github.com/jerbly/honeycomb-client?tag=0.2.2#def7ae2ac0ce0fd5667e798b2bfea1e26bcbe65e"
 dependencies = [
  "anyhow",
  "chrono",

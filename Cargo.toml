@@ -8,7 +8,8 @@ anyhow = "1.0.86"
 axum = "0.7.5"
 chrono = "0.4.38"
 futures = "0.3.30"
-honeycomb-client = { path = "../honeycomb-client" }
+honeycomb-client = { git = "https://github.com/jerbly/honeycomb-client", tag = "0.2.2" }
+# honeycomb-client = { path = "../honeycomb-client" }
 opentelemetry = "0.22"
 opentelemetry_sdk = "0.22"
 opentelemetry-stdout = { version = "0.3", features = ["trace"] }
