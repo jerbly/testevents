@@ -18,9 +18,9 @@ If you really want to build from source and not use a [pre-built binary release]
 [Rust installation](https://www.rust-lang.org/) to compile it:
 
 ```shell
-$ git clone https://github.com/jerbly/testevents.git
-$ cd testevents
-$ cargo build --release
+git clone https://github.com/jerbly/testevents.git
+cd testevents
+cargo build --release
 ```
 
 ## Usage
@@ -34,6 +34,7 @@ Provide `TESTEVENTS_PORT` to bind to an alternative from the default `3003`.
 ### Example
 
 Request:
+
 ```shell
 curl -i -X POST \
   'http://127.0.0.1:3003/' \
@@ -43,7 +44,9 @@ curl -i -X POST \
        "hello":"world", 
        "ttl":6000}'
 ```
+
 Response:
+
 ```shell
 HTTP/1.1 200 OK
 content-type: application/json
