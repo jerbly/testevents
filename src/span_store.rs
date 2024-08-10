@@ -113,12 +113,19 @@ impl SpanAttributes {
                     .unwrap_or_default()
                     .clone_into(&mut self.service_name),
                 "status_code" => self.status_code = value.as_i64().unwrap_or_default(),
-                "ttl" => self.ttl = value.as_i64().unwrap_or_default(),
+                "ttl" => self.set_ttl(value.as_i64().unwrap_or_default()),
                 _ => {
                     self.extra.insert(key, value);
                 }
             }
         }
+    }
+
+    fn set_ttl(&mut self, ttl: i64) {
+        // set a new ttl which is millis from timestamp + incoming ttl
+        let now = Utc::now().timestamp_millis();
+        let current_used_millis = now - self.timestamp.timestamp_millis();
+        self.ttl = current_used_millis + ttl;
     }
 }
 
@@ -159,6 +166,7 @@ impl SpanAttributes {
 
 #[derive(Deserialize, Debug)]
 pub struct QueryAttributes {
+    #[serde(rename = "service.name")]
     service_name: String,
     name: String,
     ttl: Option<i64>,

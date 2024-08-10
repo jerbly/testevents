@@ -8,7 +8,7 @@ A service to make it easier to create Honeycomb spans in some restricted environ
 
 Spans are "closed" with a `DELETE` to `/{trace_id}/{span_id}/` - this creates the Honeycomb event with a calculated `duration_ms` from the "open" call.
 
-`PATCH` to `/{trace_id}/{span_id}/` can be used to merge a set of key-values into the "open" span. Existing keys will have their values overwritten. You can change the `ttl` to extend or shorten the time to expiry.
+`PATCH` to `/{trace_id}/{span_id}/` can be used to merge a set of key-values into the "open" span. Existing keys will have their values overwritten. You can change the `ttl` to extend or shorten the time to expiry. e.g. patching 10000 to a span that has been running for 34125ms will set the ttl to 44125.
 
 ## Installing
 
@@ -41,7 +41,7 @@ Make a root span:
 curl -i -X POST \
   'http://127.0.0.1:3003/' \                                                        
   -H 'Content-Type: application/json' \
-  -d '{"service_name":"jerbly-test",
+  -d '{"service.name":"jerbly-test",
        "name":"test",
        "hello":"world",     
        "ttl":600000}'
@@ -60,7 +60,7 @@ Make a child span:
 curl -i -X POST \
   'http://127.0.0.1:3003/4c278c122e123f87036b44772861b9f4/5370f70191c4b03c/' \
   -H 'Content-Type: application/json' \
-  -d '{"service_name":"jerbly-test",
+  -d '{"service.name":"jerbly-test",
        "name":"test_child", 
        "hello":"child span",
        "ttl":600000}'

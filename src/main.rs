@@ -65,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
     // run it
     let bind_port = std::env::var("TESTEVENTS_PORT").unwrap_or("3003".to_string());
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{bind_port}")).await?;
+    println!("testevents version: {}", env!("CARGO_PKG_VERSION"));
     println!("listening on {}", listener.local_addr()?);
     axum::serve(listener, app).await?;
 
