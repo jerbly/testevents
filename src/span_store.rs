@@ -49,6 +49,21 @@ impl SpanStore {
         }
     }
 
+    pub fn update(
+        &mut self,
+        trace_id: String,
+        span_id: String,
+        merge_attributes: HashMap<String, Value>,
+    ) -> bool {
+        // Update the span in the store and return it
+        if let Some(span_attributes) = self.spans.get_mut(&(trace_id, span_id)) {
+            span_attributes.merge(merge_attributes);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn get_expired_keys(&self) -> Vec<(String, String)> {
         self.spans
             .iter()
@@ -83,6 +98,28 @@ pub struct SpanAttributes {
     extra: HashMap<String, Value>,
     #[serde(skip_serializing)]
     ttl: i64,
+}
+
+impl SpanAttributes {
+    pub fn merge(&mut self, merge_attributes: HashMap<String, Value>) {
+        for (key, value) in merge_attributes {
+            match key.as_str() {
+                "name" => value
+                    .as_str()
+                    .unwrap_or_default()
+                    .clone_into(&mut self.name),
+                "service.name" => value
+                    .as_str()
+                    .unwrap_or_default()
+                    .clone_into(&mut self.service_name),
+                "status_code" => self.status_code = value.as_i64().unwrap_or_default(),
+                "ttl" => self.ttl = value.as_i64().unwrap_or_default(),
+                _ => {
+                    self.extra.insert(key, value);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]

@@ -1,12 +1,15 @@
 mod span_store;
 
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, patch, post},
     Json, Router,
 };
 use honeycomb_client::honeycomb::HoneyComb;
@@ -49,9 +52,10 @@ async fn main() -> anyhow::Result<()> {
 
     // build our application with a route
     let app = Router::new()
-        .route("/", post(root_handler))
-        .route("/child/:trace_id/:span_id/", post(child_handler))
-        .route("/close/:trace_id/:span_id/", get(close_handler))
+        .route("/", post(root_handler)) // POST == create
+        .route("/:trace_id/:span_id/", post(child_handler))
+        .route("/:trace_id/:span_id/", delete(close_handler))
+        .route("/:trace_id/:span_id/", patch(update_handler)) // PATCH == merge-update
         .with_state(Arc::clone(&shared_state));
 
     // Start the span ttl handler
@@ -124,6 +128,20 @@ async fn close_handler(
             Ok(Json(json!({ "message": "OK" })))
         }
         None => Err(AppError::SpanNotFound),
+    }
+}
+
+async fn update_handler(
+    State(state): State<SharedState>,
+    Path((trace_id, span_id)): Path<(String, String)>,
+    Json(attributes): Json<HashMap<String, Value>>,
+) -> Result<Json<Value>, AppError> {
+    // Find the span and update it
+    let mut state = state.write().expect("RwLock should not be poisoned");
+    if state.spans.update(trace_id, span_id, attributes) {
+        Ok(Json(json!({ "message": "OK" })))
+    } else {
+        Err(AppError::SpanNotFound)
     }
 }
 

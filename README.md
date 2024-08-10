@@ -4,9 +4,11 @@ A service to make it easier to create Honeycomb spans in some restricted environ
 
 **testevents** wraps the Honeycomb [Create Events API](https://docs.honeycomb.io/api/tag/Events#operation/createEvents) with an in-memory store, keyed on `trace_id` and `span_id`. When you open a span you provide a TTL. If you don't close it in time, say your script crashed, it will "close" the span with an error stating that the TTL ran out.
 
-**testevents** uses the OpenTelemetry library to create the `trace_id` and `span_id` ensuring downstream compatibility. `/` and `/child/` also return a [`traceparent`](https://www.w3.org/TR/trace-context/#traceparent-header-field-values) that can be used in subsequent http calls for distributed tracing.
+**testevents** uses the OpenTelemetry library to create the `trace_id` and `span_id` ensuring downstream compatibility. A [`traceparent`](https://www.w3.org/TR/trace-context/#traceparent-header-field-values) is returned from `POST` operations that can be used in subsequent http calls for distributed tracing.
 
-Spans are "closed" with `/close/{trace_id}/{span_id}/` - this creates the Honeycomb event with a calculated `duration_ms` from the "open" call: `/` or `/child/`.
+Spans are "closed" with a `DELETE` to `/{trace_id}/{span_id}/` - this creates the Honeycomb event with a calculated `duration_ms` from the "open" call.
+
+`PATCH` to `/{trace_id}/{span_id}/` can be used to merge a set of key-values into the "open" span. Existing keys will have their values overwritten. You can change the `ttl` to extend or shorten the time to expiry.
 
 ## Installing
 
@@ -56,7 +58,7 @@ Make a child span:
 
 ```shell
 curl -i -X POST \
-  'http://127.0.0.1:3003/child/4c278c122e123f87036b44772861b9f4/5370f70191c4b03c/' \
+  'http://127.0.0.1:3003/4c278c122e123f87036b44772861b9f4/5370f70191c4b03c/' \
   -H 'Content-Type: application/json' \
   -d '{"service_name":"jerbly-test",
        "name":"test_child", 
@@ -74,8 +76,8 @@ date: Thu, 11 Jul 2024 11:06:43 GMT
 Close the child span:
 
 ```shell
-curl -i -X GET \ 
-  'http://127.0.0.1:3003/close/4c278c122e123f87036b44772861b9f4/a53924432a660874/'  
+curl -i -X DELETE \ 
+  'http://127.0.0.1:3003/4c278c122e123f87036b44772861b9f4/a53924432a660874/'  
   
 HTTP/1.1 200 OK
 content-type: application/json
@@ -88,8 +90,8 @@ date: Thu, 11 Jul 2024 11:07:20 GMT
 Close the root span:
 
 ```shell
-curl -i -X GET \
-  'http://127.0.0.1:3003/close/4c278c122e123f87036b44772861b9f4/5370f70191c4b03c/'
+curl -i -X DELETE \
+  'http://127.0.0.1:3003/4c278c122e123f87036b44772861b9f4/5370f70191c4b03c/'
 
 HTTP/1.1 200 OK
 content-type: application/json
