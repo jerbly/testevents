@@ -2,9 +2,11 @@ mod span_store;
 
 use std::{
     collections::HashMap,
+    env,
     sync::{Arc, RwLock},
 };
 
+use anyhow::Context;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -12,19 +14,70 @@ use axum::{
     routing::{delete, patch, post},
     Json, Router,
 };
-use honeycomb_client::honeycomb::HoneyComb;
 use serde_json::{json, Value};
 
-use opentelemetry_sdk::trace::TracerProvider;
-
-use span_store::{HoneycombEvent, QueryAttributes, SpanAttributes, SpanStore};
+use span_store::{QueryAttributes, SpanAttributes, SpanStore};
 use tokio::sync::mpsc;
+
+use opentelemetry::{
+    global::{self},
+    trace::{Span, SpanContext, SpanKind, TraceContextExt, TraceFlags, TraceState},
+};
+use opentelemetry::{trace::Tracer, KeyValue};
+use opentelemetry_otlp::TonicExporterBuilder;
+use opentelemetry_sdk::trace::{Config, IdGenerator, RandomIdGenerator};
+use opentelemetry_sdk::{trace as sdktrace, Resource};
 
 type SharedState = Arc<RwLock<AppState>>;
 
+const HONEYCOMB_API_KEY: &str = "HONEYCOMB_API_KEY";
+
+fn init_hc_exporter() -> anyhow::Result<TonicExporterBuilder> {
+    use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
+    const HONEYCOMB_ENDPOINT_HOST: &str = "api.honeycomb.io";
+
+    let api_key = env::var(HONEYCOMB_API_KEY).context(format!(
+        "Environment variable {} not found",
+        HONEYCOMB_API_KEY
+    ))?;
+
+    let mut metadata = MetadataMap::with_capacity(1);
+    metadata.insert("x-honeycomb-team", api_key.parse()?);
+
+    let tls_config = ClientTlsConfig::new().domain_name(HONEYCOMB_ENDPOINT_HOST);
+    Ok(opentelemetry_otlp::new_exporter()
+        .tonic()
+        .with_metadata(metadata)
+        .with_tls_config(tls_config))
+}
+
+fn init_tracer_provider() -> anyhow::Result<sdktrace::Tracer> {
+    let service_name = env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "testevents".to_string());
+
+    let config = Config::default().with_resource(Resource::new(vec![KeyValue::new(
+        opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+        service_name,
+    )]));
+
+    // Is "honeycomb" in the OTEL_EXPORTER_OTLP_ENDPOINT env var?
+    let otel_exporter = if env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "".to_string())
+        .contains("honeycomb")
+    {
+        init_hc_exporter()?
+    } else {
+        opentelemetry_otlp::new_exporter().tonic()
+    };
+
+    Ok(opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(otel_exporter)
+        .with_trace_config(config)
+        .install_batch(opentelemetry_sdk::runtime::Tokio)?)
+}
+
 struct AppState {
-    honeycomb_tx: mpsc::UnboundedSender<SpanAttributes>,
-    provider: TracerProvider,
+    otel_tx: mpsc::UnboundedSender<SpanAttributes>,
     spans: SpanStore,
 }
 
@@ -33,19 +86,12 @@ async fn main() -> anyhow::Result<()> {
     // load configuration
     dotenv::dotenv().ok();
 
-    let provider = TracerProvider::builder()
-        .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
-        .build();
-    let hc = honeycomb_client::get_honeycomb(&["createDatasets"])
-        .await
-        .expect("Honeycomb connection must be established")
-        .expect("Honeycomb API key must be valid");
+    let _tracer = init_tracer_provider()?;
 
-    let (honeycomb_tx, honeycomb_rx) = mpsc::unbounded_channel();
+    let (otel_tx, otel_rx) = mpsc::unbounded_channel();
 
     let state = AppState {
-        honeycomb_tx,
-        provider,
+        otel_tx,
         spans: SpanStore::new(),
     };
     let shared_state = Arc::new(RwLock::new(state));
@@ -60,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start the span ttl handler
     let task1 = handle_span_ttl(&shared_state);
-    let task2 = handle_honeycomb(hc, honeycomb_rx);
+    let task2 = handle_otel(otel_rx);
 
     // run it
     let bind_port = std::env::var("TESTEVENTS_PORT").unwrap_or("3003".to_string());
@@ -81,9 +127,9 @@ async fn root_handler(
     Json(attributes): Json<QueryAttributes>,
 ) -> impl IntoResponse {
     let state = &mut state.write().expect("RwLock should not be poisoned");
-    let provider = &state.provider;
-    let trace_id = provider.config().id_generator.new_trace_id();
-    let span_id = provider.config().id_generator.new_span_id();
+    let id_generator = RandomIdGenerator::default();
+    let trace_id = id_generator.new_trace_id();
+    let span_id = id_generator.new_span_id();
     let traceparent = format!("00-{}-{}-01", trace_id, span_id);
     // Store the span
     state
@@ -102,7 +148,8 @@ async fn child_handler(
     let state = &mut state.write().expect("RwLock should not be poisoned");
     // Set the parent_id to the span_id
     let parent_id = span_id;
-    let span_id = &state.provider.config().id_generator.new_span_id();
+    let id_generator = RandomIdGenerator::default();
+    let span_id = id_generator.new_span_id();
     let traceparent = format!("00-{}-{}-01", trace_id, span_id);
     // Store the span
     state.spans.insert(
@@ -125,7 +172,7 @@ async fn close_handler(
     let span = state.spans.remove(trace_id, span_id);
     match span {
         Some(span) => {
-            state.honeycomb_tx.send(span).expect("Must send span");
+            state.otel_tx.send(span).expect("Must send span");
             Ok(Json(json!({ "message": "OK" })))
         }
         None => Err(AppError::SpanNotFound),
@@ -175,39 +222,92 @@ fn handle_span_ttl(shared_state: &SharedState) -> tokio::task::JoinHandle<()> {
                 let s = state.spans.remove(trace_id, span_id);
                 if let Some(mut span) = s {
                     span.error_timeout();
-                    state.honeycomb_tx.send(span).expect("Must send span");
+                    state.otel_tx.send(span).expect("Must send span");
                 }
             }
         }
     })
 }
 
-fn handle_honeycomb(
-    hc: HoneyComb,
+fn handle_otel(
     mut action_rx: mpsc::UnboundedReceiver<SpanAttributes>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            let span = action_rx.recv().await;
-            if let Some(span) = span {
-                let he: HoneycombEvent = span.into();
-                let he_list = vec![&he];
-                match hc
-                    .create_events(
-                        he.dataset_slug(),
-                        serde_json::to_value(he_list).expect("Must serialize"),
+            let span_attributes = action_rx.recv().await;
+            if let Some(span_attributes) = span_attributes {
+                // Get the otel trace, span and parent ids
+                let Some(trace_id) = span_attributes.otel_trace_id() else {
+                    eprintln!("Invalid trace_id {}", span_attributes.trace_trace_id);
+                    continue;
+                };
+                let Some(span_id) = span_attributes.otel_span_id() else {
+                    eprintln!("Invalid span_id {}", span_attributes.trace_span_id);
+                    continue;
+                };
+                let parent_id = span_attributes.otel_parent_id();
+
+                let tracer = global::tracer("testevents");
+
+                let span_context: Option<SpanContext> = parent_id.map(|parent| {
+                    SpanContext::new(
+                        trace_id,
+                        parent,
+                        TraceFlags::SAMPLED,
+                        false,
+                        TraceState::NONE,
                     )
-                    .await
-                {
-                    Err(e) => eprintln!("Error sending to Honeycomb: {:?}", e),
-                    Ok(statuses) => {
-                        for status in statuses {
-                            if status.status != 202 {
-                                eprintln!("Error sending to Honeycomb: {:?}", status);
+                });
+
+                // convert the extra hashmap to a vec of KeyValue
+                fn serde_to_otel(v: Value) -> opentelemetry::Value {
+                    match v {
+                        Value::String(s) => opentelemetry::Value::String(s.into()),
+                        Value::Number(n) => {
+                            if n.is_i64() {
+                                // Unwrap is safe because we know it's an i64
+                                opentelemetry::Value::I64(n.as_i64().unwrap())
+                            } else if n.is_f64() {
+                                // Unwrap is safe because we know it's an f64
+                                opentelemetry::Value::F64(n.as_f64().unwrap())
+                            } else {
+                                opentelemetry::Value::String("unsupported".into())
                             }
                         }
+                        Value::Bool(b) => opentelemetry::Value::Bool(b),
+                        _ => opentelemetry::Value::String("unsupported".into()),
                     }
                 }
+
+                let attrs = span_attributes
+                    .extra
+                    .into_iter()
+                    .map(|(k, v)| KeyValue::new(k, serde_to_otel(v)));
+
+                let span_builder = tracer
+                    .span_builder(span_attributes.name)
+                    .with_kind(SpanKind::Client)
+                    .with_trace_id(trace_id)
+                    .with_span_id(span_id)
+                    .with_start_time(span_attributes.timestamp)
+                    .with_attributes(attrs);
+
+                let mut span = if let Some(sc) = span_context {
+                    span_builder.start_with_context(
+                        &tracer,
+                        &opentelemetry::Context::new().with_remote_span_context(sc),
+                    )
+                } else {
+                    span_builder.start(&tracer)
+                };
+
+                if span_attributes.status_code == 2 {
+                    span.set_status(opentelemetry::trace::Status::Error {
+                        description: span_attributes.status_message.into(),
+                    });
+                }
+
+                drop(span);
             }
         }
     })

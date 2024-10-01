@@ -1,3 +1,9 @@
+# 0.4.0
+
+- Switched to native OpenTelemetry for wide compatibility.
+- `service.name` is now set in the `OTEL_SERVICE_NAME`.
+- String, Boolean and Number attributes are supported.
+
 # 0.3.0
 
 - `service.name` must be sent vs `service_name` now for consistency

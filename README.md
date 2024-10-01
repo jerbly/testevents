@@ -1,12 +1,12 @@
 # testevents
 
-A service to make it easier to create Honeycomb spans in some restricted environments. Similar to [buildevents](https://github.com/honeycombio/buildevents/tree/main) but a simple RESTful server. This is useful when you can't execute a binary but need a way to open and close OpenTelemetry compatible spans. Low-code testing tools are a good use case.
+A service to make it easier to create OpenTelemetry spans in some restricted environments. Similar to [buildevents](https://github.com/honeycombio/buildevents/tree/main) but a simple RESTful server. This is useful when you can't execute a binary but need a way to open and close OpenTelemetry spans. Low-code testing tools are a good use case.
 
-**testevents** wraps the Honeycomb [Create Events API](https://docs.honeycomb.io/api/tag/Events#operation/createEvents) with an in-memory store, keyed on `trace_id` and `span_id`. When you open a span you provide a TTL. If you don't close it in time, say your script crashed, it will "close" the span with an error stating that the TTL ran out.
+**testevents** has an in-memory store keyed on `trace_id` and `span_id`. When you open a span you provide a TTL. If you don't close it in time, say your script crashed, it will "close" the span with an error stating that the TTL ran out.
 
 **testevents** uses the OpenTelemetry library to create the `trace_id` and `span_id` ensuring downstream compatibility. A [`traceparent`](https://www.w3.org/TR/trace-context/#traceparent-header-field-values) is returned from `POST` operations that can be used in subsequent http calls for distributed tracing.
 
-Spans are "closed" with a `DELETE` to `/{trace_id}/{span_id}/` - this creates the Honeycomb event with a calculated `duration_ms` from the "open" call.
+Spans are "closed" with a `DELETE` to `/{trace_id}/{span_id}/` - this creates the span with a calculated `duration_ms` from the "open" call.
 
 `PATCH` to `/{trace_id}/{span_id}/` can be used to merge a set of key-values into the "open" span. Existing keys will have their values overwritten. You can change the `ttl` to extend or shorten the time to expiry. e.g. patching 10000 to a span that has been running for 34125ms will set the ttl to 44125.
 
@@ -29,9 +29,19 @@ cargo build --release
 
 ### Environment variables / `.env` file entries
 
-You must provide `HONEYCOMB_API_KEY`. This api key must have access to create datasets. An ingest key is ideal.
+_(See [`example_env.txt`](example_env.txt) for an example `.env` file)_
+
+You must provide `OTEL_EXPORTER_OTLP_ENDPOINT`. For example `http://localhost:4317`.
+
+For Honeycomb `OTEL_EXPORTER_OTLP_ENDPOINT="https://api.honeycomb.io"`. You must also provide `HONEYCOMB_API_KEY`. An ingest key is ideal.
+
+Provide `OTEL_SERVICE_NAME` to set the `service.name` for every span produced by **testevents** e.g. `my-test-automation`. Defaults to: `testevents`.
 
 Provide `TESTEVENTS_PORT` to bind to an alternative from the default `3003`.
+
+Run `test.sh` to check your setup. This will create an output like this in [otel-desktop-viewer](https://github.com/CtrlSpice/otel-desktop-viewer/tree/v0.1.4):
+
+![otel-desktop-viewer test trace](otel-trace.png)
 
 ### Example
 
@@ -41,8 +51,7 @@ Make a root span:
 curl -i -X POST \
   'http://127.0.0.1:3003/' \                                                        
   -H 'Content-Type: application/json' \
-  -d '{"service.name":"jerbly-test",
-       "name":"test",
+  -d '{"name":"test",
        "hello":"world",     
        "ttl":600000}'
 
@@ -60,8 +69,7 @@ Make a child span:
 curl -i -X POST \
   'http://127.0.0.1:3003/4c278c122e123f87036b44772861b9f4/5370f70191c4b03c/' \
   -H 'Content-Type: application/json' \
-  -d '{"service.name":"jerbly-test",
-       "name":"test_child", 
+  -d '{"name":"test_child", 
        "hello":"child span",
        "ttl":600000}'
 
@@ -101,6 +109,6 @@ date: Thu, 11 Jul 2024 11:07:38 GMT
 {"message":"OK"}
 ```
 
-Gives this trace:
+Gives this trace in [Honeycomb](https://honeycomb.io):
 
 ![a screenshot showing the trace](trace.png "Trace screenshot")

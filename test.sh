@@ -2,13 +2,13 @@
 url="http://localhost:3003"
 
 echo "Make a root span"
-response=$(curl -s -X POST $url/ -H 'Content-Type: application/json' -d '{"service.name":"jerbly-test","name":"test","hello":"world","ttl":3600000}')
+response=$(curl -s -X POST $url/ -H 'Content-Type: application/json' -d '{"name":"test","hello":"world","amount":15,"fraction":17.67,"ttl":3600000}')
 root_span_id=$(echo $response | jq -r '.span_id')
 root_trace_id=$(echo $response | jq -r '.trace_id')
 sleep 1
 
 echo "Make a child span"
-response=$(curl -s -X POST $url/$root_trace_id/$root_span_id/ -H 'Content-Type: application/json' -d '{"service.name":"jerbly-test","name":"child","ttl":3600000}')
+response=$(curl -s -X POST $url/$root_trace_id/$root_span_id/ -H 'Content-Type: application/json' -d '{"name":"child","ttl":3600000}')
 span_id=$(echo $response | jq -r '.span_id')
 sleep 1
 

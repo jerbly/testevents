@@ -1,0 +1,11 @@
+# This is an example env file. Copy the contents into your own .env file or export each variable.
+
+OTEL_SERVICE_NAME="my-test-automation"
+
+OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+
+# Honeycomb
+#OTEL_EXPORTER_OTLP_ENDPOINT="https://api.honeycomb.io"
+#HONEYCOMB_API_KEY=ingest_api_key
+
+TESTEVENTS_PORT=3003

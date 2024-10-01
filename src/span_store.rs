@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use opentelemetry::trace::{SpanId, TraceId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -27,8 +28,8 @@ impl SpanStore {
             timestamp: Utc::now(),
             duration_ms: 0,
             name: query_attributes.name,
-            service_name: query_attributes.service_name,
             status_code: 0,
+            status_message: "".to_string(),
             trace_span_id: span_id.clone(),
             trace_trace_id: trace_id.clone(),
             trace_parent_id: parent_id,
@@ -81,21 +82,20 @@ impl SpanStore {
 #[derive(Debug, Serialize, Clone)]
 pub struct SpanAttributes {
     #[serde(skip_serializing)]
-    timestamp: DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
     duration_ms: i64,
-    name: String,
-    status_code: i64,
-    #[serde(rename = "service.name")]
-    service_name: String,
+    pub name: String,
+    pub status_code: i64,
+    pub status_message: String,
     #[serde(rename = "trace.span_id")]
-    trace_span_id: String,
+    pub trace_span_id: String,
     #[serde(rename = "trace.trace_id")]
-    trace_trace_id: String,
+    pub trace_trace_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "trace.parent_id")]
-    trace_parent_id: Option<String>,
+    pub trace_parent_id: Option<String>,
     #[serde(flatten)]
-    extra: HashMap<String, Value>,
+    pub extra: HashMap<String, Value>,
     #[serde(skip_serializing)]
     ttl: i64,
 }
@@ -108,11 +108,11 @@ impl SpanAttributes {
                     .as_str()
                     .unwrap_or_default()
                     .clone_into(&mut self.name),
-                "service.name" => value
+                "status_code" => self.status_code = value.as_i64().unwrap_or_default(),
+                "status_message" => value
                     .as_str()
                     .unwrap_or_default()
-                    .clone_into(&mut self.service_name),
-                "status_code" => self.status_code = value.as_i64().unwrap_or_default(),
+                    .clone_into(&mut self.status_message),
                 "ttl" => self.set_ttl(value.as_i64().unwrap_or_default()),
                 _ => {
                     self.extra.insert(key, value);
@@ -127,26 +127,19 @@ impl SpanAttributes {
         let current_used_millis = now - self.timestamp.timestamp_millis();
         self.ttl = current_used_millis + ttl;
     }
-}
 
-#[derive(Debug, Serialize, Clone)]
-pub struct HoneycombEvent {
-    time: DateTime<Utc>,
-    data: SpanAttributes,
-}
-
-impl From<SpanAttributes> for HoneycombEvent {
-    fn from(span: SpanAttributes) -> Self {
-        HoneycombEvent {
-            time: span.timestamp,
-            data: span,
-        }
+    pub fn otel_trace_id(&self) -> Option<TraceId> {
+        TraceId::from_hex(&self.trace_trace_id).ok()
     }
-}
 
-impl HoneycombEvent {
-    pub fn dataset_slug(&self) -> &str {
-        self.data.service_name.as_str()
+    pub fn otel_span_id(&self) -> Option<SpanId> {
+        SpanId::from_hex(&self.trace_span_id).ok()
+    }
+
+    pub fn otel_parent_id(&self) -> Option<SpanId> {
+        self.trace_parent_id
+            .as_ref()
+            .and_then(|parent_id| SpanId::from_hex(parent_id).ok())
     }
 }
 
@@ -156,18 +149,12 @@ impl SpanAttributes {
     }
     pub fn error_timeout(&mut self) {
         self.status_code = 2;
-        self.extra.insert("error".to_owned(), true.into());
-        self.extra.insert(
-            "status_message".to_owned(),
-            format!("testevents timeout: TTL was {}", self.ttl).into(),
-        );
+        self.status_message = format!("testevents timeout: TTL was {}", self.ttl);
     }
 }
 
 #[derive(Deserialize, Debug)]
 pub struct QueryAttributes {
-    #[serde(rename = "service.name")]
-    service_name: String,
     name: String,
     ttl: Option<i64>,
     #[serde(flatten)]
